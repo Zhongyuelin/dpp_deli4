@@ -9,7 +9,9 @@ format:
     code-fold: show
     theme: cosmo
 ---
-
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
 ## Introduction
 
 This analysis examines IMO performance patterns across three dimensions:
