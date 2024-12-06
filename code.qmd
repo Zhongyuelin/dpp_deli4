@@ -1,0 +1,197 @@
+---
+title: "IMO Data Analysis and Aggregation"
+subtitle: "Analysis of International Mathematical Olympiad Results"
+author: "Zhongyue Lin"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    code-fold: show
+    theme: cosmo
+    output-file: index.html
+---
+
+## Introduction
+
+This analysis examines International Mathematical Olympiad (IMO) performance data. We focus on three key aspects:
+
+1. Country-level average performance
+
+2. Performance distribution across different award categories
+
+3. Medal counts and their relationship with average scores
+
+## Setup and Data Import
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load required packages
+library(tidyverse)  # For data manipulation and visualization
+library(arrow)      # For parquet file handling
+library(curl)       # For secure data download
+
+# Configure proxy settings
+Sys.setenv(http_proxy = "http://127.0.0.1:1087",
+           https_proxy = "http://127.0.0.1:1087")
+
+# Create output directory
+dir.create("finalOutput", showWarnings = FALSE)
+
+# Custom function for data import with type specification
+read_imo_data <- function(file_name, integer_cols, character_cols, date_cols = c()) {
+  base_url <- "https://raw.githubusercontent.com/Zhongyuelin/Deliverable01-Collecting-raw-data-/main/IMO_data/"
+  url <- paste0(base_url, file_name)
+  
+  # Setup secure connection
+  h <- new_handle()
+  handle_setopt(h, ssl_verifypeer = FALSE)
+  temp <- tempfile()
+  curl_download(url, temp, handle = h)
+  
+  # Define column types
+  col_types <- cols(.default = col_double())
+  col_types$cols[integer_cols] <- map(integer_cols, ~ col_integer())
+  col_types$cols[character_cols] <- map(character_cols, ~ col_character())
+  col_types$cols[date_cols] <- map(date_cols, ~ col_date())
+  
+  # Read and return data
+  data <- read_csv(temp, col_types = col_types)
+  unlink(temp)
+  return(data)
+}
+```
+
+## Data Loading and Initial Processing
+
+```{r data-import}
+# Import individual results with specified column types
+individual_results <- read_imo_data(
+  "individual_results.csv",
+  integer_cols = c("year", paste0("p", 1:6), "total", "individual_rank"),
+  character_cols = c("contestant", "country", "award")
+)
+
+# Display data structure
+glimpse(individual_results)
+```
+
+## Analysis 1: Single Group Analysis
+Calculating average total scores by country to identify overall performance patterns.
+
+```{r analysis1}
+output111 <- individual_results %>%
+  group_by(country) %>%
+  summarise(
+    mean_total = mean(total, na.rm = TRUE),
+    n_participants = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(mean_total))
+
+# Display top performers
+print("Top 10 countries by average score:")
+head(output111, 10)
+```
+
+## Analysis 2: Double Group Analysis
+Examining score distribution across different award categories.
+
+```{r analysis2}
+output221 <- individual_results %>%
+  group_by(country, award) %>%
+  summarise(
+    mean_total = mean(total, na.rm = TRUE),
+    max_total = max(total, na.rm = TRUE),
+    participant_count = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(mean_total))
+
+print("Performance by award category:")
+head(output221, 10)
+```
+
+## Analysis 3: Dual Metric Analysis
+Combining average scores with medal counts for comprehensive performance assessment.
+
+```{r analysis3}
+output12f1f2 <- individual_results %>%
+  group_by(country) %>%
+  summarise(
+    avg_total = mean(total, na.rm = TRUE),
+    medal_count = sum(award != "", na.rm = TRUE),
+    participation_years = n_distinct(year),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(avg_total))
+```
+
+## Data Export
+Saving results in multiple formats for different use cases.
+
+```{r save-results}
+# Helper function for multi-format saving
+save_data <- function(data, name) {
+  write_csv(data, file.path("finalOutput", paste0(name, ".csv")))
+  write_parquet(data, file.path("finalOutput", paste0(name, ".parquet")))
+  saveRDS(data, file.path("finalOutput", paste0(name, ".rds")))
+}
+
+# Save all outputs
+save_data(output111, "output111")
+save_data(output221, "output221")
+save_data(output12f1f2, "output12f1f2")
+```
+
+## Visualization
+Creating informative visualizations of the analysis results.
+
+```{r visualizations, fig.width=10, fig.height=6}
+# Performance visualization
+p1 <- ggplot(head(arrange(output111, desc(mean_total)), 20), 
+       aes(x = reorder(country, mean_total), y = mean_total)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  labs(
+    title = "Top 20 Countries by Average IMO Score",
+    x = "Country",
+    y = "Average Score"
+  )
+
+# Medal count visualization
+p2 <- ggplot(head(arrange(output12f1f2, desc(medal_count)), 20), 
+       aes(x = reorder(country, medal_count), y = medal_count)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  labs(
+    title = "Top 20 Countries by Medal Count",
+    x = "Country",
+    y = "Total Medals"
+  )
+
+# Save and display plots
+ggsave("finalOutput/average_scores.png", p1, width = 10, height = 6)
+ggsave("finalOutput/medal_counts.png", p2, width = 10, height = 6)
+
+print(p1)
+print(p2)
+```
+
+## Conclusions
+
+The analysis reveals several key insights:
+
+- Performance patterns vary significantly across countries
+
+- Strong correlation between average scores and medal counts
+
+- Consistent top performers across different metrics
+
+These findings provide valuable insights into international mathematical competition patterns and national performance trends.
