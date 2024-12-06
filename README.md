@@ -6,6 +6,12 @@ Data retrieved from IMO database:
 https://raw.githubusercontent.com/Zhongyuelin/Deliverable01-Collecting-raw-data-/main/IMO_data/
 ```
 
+## Code Visualization
+View the analysis code and visualizations at:
+```
+https://zhongyuelin.github.io/dpp_deli4/
+```
+
 ## Project Structure
 ```
 .
@@ -49,8 +55,7 @@ install.packages(c("tidyverse", "arrow", "curl", "ggrepel", "scales", "patchwork
 1. Clone repository
 2. Run code.qmd in RStudio
 3. View analysis in index.html
+4. Online visualization at https://zhongyuelin.github.io/dpp_deli4/
 
 ## Author
 Zhongyue Lin
-
-[View Analysis](index.html)
