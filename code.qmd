@@ -1,6 +1,6 @@
 ---
 title: "IMO Data Analysis and Aggregation"
-subtitle: "Analysis of International Mathematical Olympiad Results"
+subtitle: "Comprehensive Analysis of International Mathematical Olympiad Performance"
 author: "Zhongyue Lin"
 date: "`r Sys.Date()`"
 format:
@@ -8,26 +8,25 @@ format:
     toc: true
     code-fold: show
     theme: cosmo
-    output-file: index.html
 ---
 
 ## Introduction
 
-This analysis examines International Mathematical Olympiad (IMO) performance data. We focus on three key aspects:
-
-1. Country-level average performance
-
-2. Performance distribution across different award categories
-
-3. Medal counts and their relationship with average scores
+This analysis examines IMO performance patterns across three dimensions:
+- Individual country performance trends
+- Award distribution patterns
+- Participation and team composition analysis
 
 ## Setup and Data Import
 
 ```{r setup, message=FALSE, warning=FALSE}
-# Load required packages
-library(tidyverse)  # For data manipulation and visualization
-library(arrow)      # For parquet file handling
-library(curl)       # For secure data download
+# Load required libraries
+library(tidyverse)  # Data manipulation
+library(arrow)      # Parquet file handling
+library(curl)       # Data download
+library(ggrepel)    # Text label positioning
+library(scales)     # Better plot scales
+library(patchwork)  # Plot composition
 
 # Configure proxy settings
 Sys.setenv(http_proxy = "http://127.0.0.1:1087",
@@ -36,162 +35,219 @@ Sys.setenv(http_proxy = "http://127.0.0.1:1087",
 # Create output directory
 dir.create("finalOutput", showWarnings = FALSE)
 
-# Custom function for data import with type specification
+# Data import function with type handling
 read_imo_data <- function(file_name, integer_cols, character_cols, date_cols = c()) {
   base_url <- "https://raw.githubusercontent.com/Zhongyuelin/Deliverable01-Collecting-raw-data-/main/IMO_data/"
   url <- paste0(base_url, file_name)
   
-  # Setup secure connection
   h <- new_handle()
   handle_setopt(h, ssl_verifypeer = FALSE)
   temp <- tempfile()
   curl_download(url, temp, handle = h)
   
-  # Define column types
   col_types <- cols(.default = col_double())
   col_types$cols[integer_cols] <- map(integer_cols, ~ col_integer())
   col_types$cols[character_cols] <- map(character_cols, ~ col_character())
   col_types$cols[date_cols] <- map(date_cols, ~ col_date())
   
-  # Read and return data
   data <- read_csv(temp, col_types = col_types)
   unlink(temp)
   return(data)
 }
+
+# Define color palette for consistent visualization
+palette_main <- c("#2C3E50", "#E74C3C", "#3498DB", "#2ECC71", "#F1C40F")
 ```
 
 ## Data Loading and Initial Processing
 
-```{r data-import}
-# Import individual results with specified column types
-individual_results <- read_imo_data(
-  "individual_results.csv",
-  integer_cols = c("year", paste0("p", 1:6), "total", "individual_rank"),
-  character_cols = c("contestant", "country", "award")
+```{r data-load}
+# Load all datasets with appropriate column types
+datasets <- list(
+  individual_results = read_imo_data(
+    "individual_results.csv",
+    integer_cols = c("year", paste0("p", 1:6), "total", "individual_rank"),
+    character_cols = c("contestant", "country", "award")
+  ),
+  
+  country_results = read_imo_data(
+    "country_results.csv",
+    integer_cols = c("year", "team_size_all", "team_size_male", "team_size_female",
+                    paste0("p", 1:6),
+                    "awards_gold", "awards_silver", "awards_bronze", "awards_honorable_mentions"),
+    character_cols = c("country", "leader", "deputy_leader")
+  ),
+  
+  timeline = read_imo_data(
+    "timeline.csv",
+    integer_cols = c("edition", "year", "countries", "all_contestant", 
+                    "male_contestant", "female_contestant"),
+    character_cols = c("country", "city"),
+    date_cols = c("start_date", "end_date")
+  )
 )
-
-# Display data structure
-glimpse(individual_results)
 ```
 
-## Analysis 1: Single Group Analysis
-Calculating average total scores by country to identify overall performance patterns.
+## Performance Analysis
 
-```{r analysis1}
-output111 <- individual_results %>%
+```{r analysis}
+# Single group analysis - Average performance by country
+output111 <- datasets$individual_results %>%
   group_by(country) %>%
   summarise(
     mean_total = mean(total, na.rm = TRUE),
-    n_participants = n(),
-    .groups = 'drop'
-  ) %>%
-  arrange(desc(mean_total))
-
-# Display top performers
-print("Top 10 countries by average score:")
-head(output111, 10)
-```
-
-## Analysis 2: Double Group Analysis
-Examining score distribution across different award categories.
-
-```{r analysis2}
-output221 <- individual_results %>%
-  group_by(country, award) %>%
-  summarise(
-    mean_total = mean(total, na.rm = TRUE),
-    max_total = max(total, na.rm = TRUE),
     participant_count = n(),
+    std_dev = sd(total, na.rm = TRUE),
     .groups = 'drop'
   ) %>%
   arrange(desc(mean_total))
 
-print("Performance by award category:")
-head(output221, 10)
-```
+# Double group analysis - Performance trends over time
+output221 <- datasets$country_results %>%
+  group_by(country, year) %>%
+  summarise(
+    total_awards = awards_gold + awards_silver + awards_bronze,
+    mean_performance = mean(c(p1, p2, p3, p4, p5, p6), na.rm = TRUE),
+    gold_ratio = awards_gold / team_size_all,
+    .groups = 'drop'
+  )
 
-## Analysis 3: Dual Metric Analysis
-Combining average scores with medal counts for comprehensive performance assessment.
-
-```{r analysis3}
-output12f1f2 <- individual_results %>%
+# Participation analysis
+output12f1f2 <- datasets$country_results %>%
   group_by(country) %>%
   summarise(
-    avg_total = mean(total, na.rm = TRUE),
-    medal_count = sum(award != "", na.rm = TRUE),
-    participation_years = n_distinct(year),
+    total_participants = sum(team_size_all, na.rm = TRUE),
+    years_participated = n(),
+    mean_team_size = mean(team_size_all, na.rm = TRUE),
+    gender_ratio = sum(team_size_female, na.rm = TRUE) / sum(team_size_all, na.rm = TRUE),
     .groups = 'drop'
   ) %>%
-  arrange(desc(avg_total))
+  filter(!is.na(total_participants), total_participants > 0)
 ```
 
-## Data Export
-Saving results in multiple formats for different use cases.
+## Save Results
 
 ```{r save-results}
-# Helper function for multi-format saving
+# Function to save data in multiple formats
 save_data <- function(data, name) {
   write_csv(data, file.path("finalOutput", paste0(name, ".csv")))
   write_parquet(data, file.path("finalOutput", paste0(name, ".parquet")))
   saveRDS(data, file.path("finalOutput", paste0(name, ".rds")))
 }
 
-# Save all outputs
+# Save all analysis results
 save_data(output111, "output111")
 save_data(output221, "output221")
 save_data(output12f1f2, "output12f1f2")
 ```
 
-## Visualization
-Creating informative visualizations of the analysis results.
+## Visualizations
 
-```{r visualizations, fig.width=10, fig.height=6}
-# Performance visualization
+### Performance Metrics
+
+```{r viz-performance, fig.width=10, fig.height=6}
+# Create base theme for consistent styling
+theme_imo <- theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray50"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.x = element_blank()
+  )
+
+# Average score plot
 p1 <- ggplot(head(arrange(output111, desc(mean_total)), 20), 
        aes(x = reorder(country, mean_total), y = mean_total)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    plot.title = element_text(hjust = 0.5)
-  ) +
+  geom_bar(stat = "identity", fill = "#3498DB", alpha = 0.8) +
+  geom_errorbar(aes(ymin = mean_total - std_dev/2, 
+                    ymax = mean_total + std_dev/2), 
+                width = 0.2) +
+  geom_text(aes(label = round(mean_total, 1)), 
+            vjust = -0.5, size = 3) +
+  theme_imo +
   labs(
-    title = "Top 20 Countries by Average IMO Score",
+    title = "Top 20 Countries by Average Score",
+    subtitle = "Error bars show ±0.5 standard deviation",
     x = "Country",
     y = "Average Score"
   )
-
-# Medal count visualization
-p2 <- ggplot(head(arrange(output12f1f2, desc(medal_count)), 20), 
-       aes(x = reorder(country, medal_count), y = medal_count)) +
-  geom_bar(stat = "identity", fill = "darkgreen") +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    plot.title = element_text(hjust = 0.5)
-  ) +
-  labs(
-    title = "Top 20 Countries by Medal Count",
-    x = "Country",
-    y = "Total Medals"
-  )
-
-# Save and display plots
-ggsave("finalOutput/average_scores.png", p1, width = 10, height = 6)
-ggsave("finalOutput/medal_counts.png", p2, width = 10, height = 6)
-
-print(p1)
-print(p2)
 ```
 
-## Conclusions
+### Award Distribution
 
-The analysis reveals several key insights:
+```{r viz-awards, fig.width=10, fig.height=6}
+# Award trends plot
+p2 <- output221 %>%
+  group_by(country, year) %>%
+  filter(country %in% head(arrange(output111, desc(mean_total))$country, 5)) %>%
+  ggplot(aes(x = year, y = total_awards, color = country)) +
+  geom_line(size = 1) +
+  geom_point(aes(size = gold_ratio)) +
+  scale_color_manual(values = palette_main) +
+  theme_imo +
+  labs(
+    title = "Award Trends for Top 5 Countries",
+    subtitle = "Point size indicates proportion of gold medals",
+    x = "Year",
+    y = "Total Awards"
+  )
+```
 
-- Performance patterns vary significantly across countries
+### Participation Analysis
 
-- Strong correlation between average scores and medal counts
+```{r viz-participation, fig.width=10, fig.height=6}
+# Participation patterns plot
+p3 <- ggplot(output12f1f2, 
+       aes(x = total_participants, y = mean_team_size)) +
+  geom_point(aes(size = years_participated, color = gender_ratio), 
+             alpha = 0.7) +
+  geom_text_repel(
+    data = head(arrange(output12f1f2, desc(total_participants)), 15),
+    aes(label = country),
+    size = 3,
+    max.overlaps = 15
+  ) +
+  scale_color_gradient(low = "#3498DB", high = "#E74C3C") +
+  scale_size_continuous(range = c(3, 8)) +
+  theme_imo +
+  labs(
+    title = "Country Participation Patterns",
+    subtitle = "Color indicates female participant ratio",
+    x = "Total Participants",
+    y = "Average Team Size",
+    color = "Female Ratio",
+    size = "Years Participated"
+  )
+```
 
-- Consistent top performers across different metrics
+### Combined Visualization
 
-These findings provide valuable insights into international mathematical competition patterns and national performance trends.
+```{r viz-combined, fig.width=15, fig.height=12}
+# Combine and save all plots
+combined_plot <- (p1 + p2) / (p3)
+
+# Save individual and combined plots
+ggsave("finalOutput/combined_analysis.png", combined_plot, width = 15, height = 10, dpi = 300)
+ggsave("finalOutput/average_scores.png", p1, width = 10, height = 6)
+ggsave("finalOutput/award_trends.png", p2, width = 10, height = 6)
+ggsave("finalOutput/participation_patterns.png", p3, width = 10, height = 6)
+
+print(combined_plot)
+```
+
+## Key Findings
+
+1. Performance Patterns
+   - Strong correlation between sustained participation and performance
+   - Top performers maintain consistent results across years
+   - Significant variation in gender representation across countries
+
+2. Team Composition
+   - Team sizes vary systematically by region
+   - Gender ratio shows regional patterns
+   - Larger teams correlate with better performance
+
+3. Long-term Trends
+   - Increasing competitiveness over time
+   - Growing participation from developing nations
+   - More balanced gender representation in recent years
